@@ -17,11 +17,19 @@
 # MAGIC - Writes pages via MERGE on `(document_id, page_num)` so reruns do not duplicate
 
 # COMMAND ----------
-# MAGIC %pip install -U pymupdf
+# MAGIC %pip install -U PyMuPDF
+
+# COMMAND ----------
+# MAGIC # Databricks often needs a Python restart after %pip installs to pick up new modules.
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+except Exception:
+    # Newer PyMuPDF versions also expose `pymupdf` as the import name.
+    import pymupdf as fitz
 
 MAX_DOCS = None  # set to an int for debugging (e.g. 2)
 
