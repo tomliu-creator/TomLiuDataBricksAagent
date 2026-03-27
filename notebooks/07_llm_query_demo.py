@@ -26,6 +26,19 @@ from datetime import datetime, timezone
 
 from databricks.vector_search.client import VectorSearchClient
 
+def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
+    try:
+        cur = dbutils.widgets.get(name)
+        if override_if and cur in override_if:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+            return
+        if (cur is None or cur.strip() == "") and default:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+    except Exception:
+        dbutils.widgets.text(name, default)
+
 dbutils.widgets.text("question", "What are the key liquidity risks and debt maturities disclosed?")
 dbutils.widgets.text("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
 dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
@@ -38,6 +51,8 @@ dbutils.widgets.text("temperature", "0.1")
 dbutils.widgets.text("max_tokens", "900")
 
 QUESTION = dbutils.widgets.get("question").strip()
+_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
+_ensure_text_widget("vs_index_name", DEFAULT_VS_INDEX, override_if={""})
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
 TOP_K = int(dbutils.widgets.get("top_k"))
@@ -185,7 +200,11 @@ def call_llm_anthropic_messages(prompt: str) -> str:
 def call_llm_ai_query(prompt: str) -> str:
     # ai_query(endpoint, request_string, modelParameters => named_struct(...))
     prompt_sql = json.dumps(prompt)
-    sql = f\"\"\"\n+    SELECT ai_query(\n+      '{MODEL_NAME}',\n+      {prompt_sql},\n+      modelParameters => named_struct('max_tokens', {MAX_TOKENS}, 'temperature', {TEMPERATURE})\n+    ) AS out\n+    \"\"\"\n+    return spark.sql(sql).collect()[0][\"out\"]
+    sql = (
+        f"SELECT ai_query('{MODEL_NAME}', {prompt_sql}, "
+        f"modelParameters => named_struct('max_tokens', {MAX_TOKENS}, 'temperature', {TEMPERATURE})) AS out"
+    )
+    return spark.sql(sql).collect()[0]["out"]
 
 
 # COMMAND ----------

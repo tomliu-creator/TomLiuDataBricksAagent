@@ -22,13 +22,17 @@
 
 from databricks.vector_search.client import VectorSearchClient
 
-def _ensure_text_widget(name: str, default: str):
+def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
     """
     Databricks widgets persist across reruns. If a widget already exists with an empty value,
     calling widgets.text(...) again won't update it. This helper forces a sane default.
     """
     try:
         cur = dbutils.widgets.get(name)
+        if override_if and cur in override_if:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+            return
         if (cur is None or cur.strip() == "") and default:
             dbutils.widgets.remove(name)
             dbutils.widgets.text(name, default)
@@ -47,7 +51,7 @@ def _ensure_dropdown_widget(name: str, default: str, choices: list[str]):
 
 
 # Parameterize names; do not hardcode brittle endpoints.
-_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
+_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
 _ensure_text_widget("vs_index_name", DEFAULT_VS_INDEX)
 # Default to Databricks-hosted English embeddings if available in the workspace.
 _ensure_text_widget("embedding_model_endpoint_name", "databricks-bge-large-en")

@@ -22,6 +22,19 @@ import json
 from datetime import datetime, timezone
 from databricks.vector_search.client import VectorSearchClient
 
+def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
+    try:
+        cur = dbutils.widgets.get(name)
+        if override_if and cur in override_if:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+            return
+        if (cur is None or cur.strip() == "") and default:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+    except Exception:
+        dbutils.widgets.text(name, default)
+
 dbutils.widgets.text("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
 dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
 dbutils.widgets.text("top_k", "8")
@@ -35,6 +48,10 @@ VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
 TOP_K = int(dbutils.widgets.get("top_k"))
 FILTERS_RAW = dbutils.widgets.get("filters").strip() or None
 ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
+
+# If you previously used the template endpoint name, auto-switch to the configured default.
+_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
+VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 
 print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
@@ -94,9 +111,9 @@ def _draft_answer_with_ai_query(model_name: str, question: str, retrieved_chunks
         "EVIDENCE:\n" + "\n\n".join(evidence_lines)
     )
     # ai_query(endpoint, request_string)
-    out = spark.sql(
-        f\"\"\"SELECT ai_query('{model_name}', {json.dumps(prompt)}) AS answer\"\"\"
-    ).collect()[0]["answer"]
+    prompt_sql = json.dumps(prompt)
+    sql = f"SELECT ai_query('{model_name}', {prompt_sql}) AS answer"
+    out = spark.sql(sql).collect()[0]["answer"]
     return out
 
 

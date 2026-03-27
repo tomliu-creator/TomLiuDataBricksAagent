@@ -31,6 +31,7 @@ ERRORS_TABLE = f"{CATALOG}.{SCHEMA}.pipeline_errors"
 RETRIEVAL_EVAL_TABLE = f"{CATALOG}.{SCHEMA}.retrieval_eval_runs"
 
 # Vector Search (names are intentionally parameterized; set in 05_vector_index/07_llm_query_demo)
-DEFAULT_VS_ENDPOINT = "vs_fin_agent"
+# Workspace endpoint quota is often 1; reuse the existing endpoint if present.
+DEFAULT_VS_ENDPOINT = "emd-default-vs"
 DEFAULT_VS_INDEX = f"{CATALOG}.{SCHEMA}.vs_parts_holding_europe_chunks_en"
 
