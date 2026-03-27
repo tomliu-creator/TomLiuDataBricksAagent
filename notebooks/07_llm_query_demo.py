@@ -73,9 +73,16 @@ print("MODEL_NAME:", MODEL_NAME)
 
 
 def _vs_extract_rows(vs_response: dict) -> list[dict]:
+    if not isinstance(vs_response, dict):
+        return []
+
+    # Vector Search responses commonly look like:
+    # { "manifest": { "columns": [...] }, "result": { "data_array": [...] } }
+    # but some older examples have manifest nested under result.
     result = vs_response.get("result") or vs_response.get("results") or vs_response
-    data = (result or {}).get("data_array") or []
-    cols = ((result or {}).get("manifest") or {}).get("columns") or []
+    manifest = vs_response.get("manifest") or (result or {}).get("manifest") or {}
+    data = (result or {}).get("data_array") or (result or {}).get("data") or []
+    cols = manifest.get("columns") or []
     names = [c.get("name") for c in cols] if cols else None
     out = []
     for r in data:
@@ -87,7 +94,7 @@ def _vs_extract_rows(vs_response: dict) -> list[dict]:
 
 
 def retrieve_chunks(question: str, top_k: int) -> list[dict]:
-    vsc = VectorSearchClient()
+    vsc = VectorSearchClient(disable_notice=True)
     index = vsc.get_index(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME)
     cols = [
         "chunk_id",

@@ -58,6 +58,17 @@ ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
 _ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 
+# If an old run left answers disabled / unset, switch back to enabled defaults.
+_ensure_text_widget("answer_model_name", "databricks-claude-sonnet-4-6", override_if={""})
+try:
+    if dbutils.widgets.get("answer_mode") in ("", "disabled"):
+        dbutils.widgets.remove("answer_mode")
+        dbutils.widgets.dropdown("answer_mode", "anthropic_messages", ["anthropic_messages", "ai_query", "disabled"])
+except Exception:
+    pass
+ANSWER_MODE = dbutils.widgets.get("answer_mode").strip()
+ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
+
 print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
 print("TOP_K:", TOP_K)
@@ -91,7 +102,7 @@ def _vs_extract_rows(vs_response: dict) -> list[dict]:
     if not isinstance(result, dict):
         return []
     data = result.get("data_array") or result.get("data") or []
-    manifest = result.get("manifest") or {}
+    manifest = vs_response.get("manifest") or result.get("manifest") or {}
     cols = manifest.get("columns") or []
     col_names = [c.get("name") for c in cols] if cols else None
     rows = []
