@@ -18,14 +18,16 @@
 
 # COMMAND ----------
 
-import uuid
 import json
-from datetime import datetime, timezone
 import os
+import uuid
+from datetime import datetime, timezone
+
 import requests
-from pyspark.sql import types as T
-from pyspark.sql import functions as F
 from databricks.vector_search.client import VectorSearchClient
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
 
 def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
     try:
@@ -40,15 +42,28 @@ def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = 
     except Exception:
         dbutils.widgets.text(name, default)
 
+
+def _ensure_dropdown_widget(name: str, default: str, choices: list[str]):
+    try:
+        cur = dbutils.widgets.get(name)
+        if cur not in choices:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.dropdown(name, default, choices)
+    except Exception:
+        dbutils.widgets.dropdown(name, default, choices)
+
+
 dbutils.widgets.text("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
 dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
 dbutils.widgets.text("top_k", "8")
-dbutils.widgets.text("filters", "")  # e.g. {"fiscal_year >= 2020": "..."} is index-dependent; keep empty for pilot
+dbutils.widgets.text("filters", "")  # optional Vector Search filters
 
 # Optional: generate a draft answer for each query.
-dbutils.widgets.dropdown("answer_mode", "ai_query", ["anthropic_messages", "ai_query", "disabled"])
-dbutils.widgets.text("answer_model_name", "databricks-gpt-oss-20b")  # known-working ai_query model in this workspace
-dbutils.widgets.text("anthropic_proxy_endpoint_name", "anthropic")
+_ensure_dropdown_widget("answer_mode", "ai_query", ["ai_query", "anthropic_messages", "disabled"])
+_ensure_text_widget("answer_model_name", "databricks-gpt-oss-20b")
+_ensure_text_widget("anthropic_proxy_endpoint_name", "anthropic")
+
+_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
 
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
@@ -58,20 +73,14 @@ ANSWER_MODE = dbutils.widgets.get("answer_mode").strip()
 ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
 ANTHROPIC_PROXY_ENDPOINT = dbutils.widgets.get("anthropic_proxy_endpoint_name").strip()
 
-# If you previously used the template endpoint name, auto-switch to the configured default.
-_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
-VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
-
-# If an old run left answers disabled / unset, switch back to enabled defaults.
-_ensure_text_widget("answer_model_name", "databricks-gpt-oss-20b", override_if={""})
-try:
-    if dbutils.widgets.get("answer_mode") in ("", "disabled"):
-        dbutils.widgets.remove("answer_mode")
-        dbutils.widgets.dropdown("answer_mode", "anthropic_messages", ["anthropic_messages", "ai_query", "disabled"])
-except Exception:
-    pass
-ANSWER_MODE = dbutils.widgets.get("answer_mode").strip()
-ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
+# Handle stale widget values from older runs.
+_STALE_MODEL_NAMES = {"databricks-claude-sonnet-4-6", "databricks-claude-sonnet-4-5", "", None}
+if ANSWER_MODEL in _STALE_MODEL_NAMES:
+    print(f"[override] Stale ANSWER_MODEL '{ANSWER_MODEL}' -> 'databricks-gpt-oss-20b'")
+    ANSWER_MODEL = "databricks-gpt-oss-20b"
+if ANSWER_MODE == "anthropic_messages":
+    print("[override] ANSWER_MODE 'anthropic_messages' -> 'ai_query' (proxy not configured)")
+    ANSWER_MODE = "ai_query"
 
 print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
@@ -80,10 +89,9 @@ print("ANSWER_MODE:", ANSWER_MODE)
 print("ANSWER_MODEL:", ANSWER_MODEL or "(unset)")
 print("ANTHROPIC_PROXY_ENDPOINT:", ANTHROPIC_PROXY_ENDPOINT)
 
-# COMMAND ----------
 
 BENCHMARK_QUESTIONS = [
-    "Summarize the company’s debt maturity profile and any refinancing risk disclosed.",
+    "Summarize the company's debt maturity profile and any refinancing risk disclosed.",
     "What covenants are disclosed for the main financing facilities, and were there any covenant breaches or waivers?",
     "Describe lease liabilities and major lease commitments (IFRS 16), including maturity if disclosed.",
     "Is there any discussion of factoring, securitization, or off-balance-sheet financing exposure? Provide details and risks.",
@@ -97,45 +105,55 @@ BENCHMARK_QUESTIONS = [
 
 
 def _vs_extract_rows(vs_response: dict) -> list[dict]:
-    """
-    Normalize similarity_search responses into a list of dicts.
-    The Vector Search API returns a 'manifest' + 'data_array' pattern.
-    """
-    if not vs_response:
+    if not isinstance(vs_response, dict):
         return []
     result = vs_response.get("result") or vs_response.get("results") or vs_response
     if not isinstance(result, dict):
         return []
-    data = result.get("data_array") or result.get("data") or []
     manifest = vs_response.get("manifest") or result.get("manifest") or {}
+    data = result.get("data_array") or result.get("data") or []
     cols = manifest.get("columns") or []
-    col_names = [c.get("name") for c in cols] if cols else None
-    rows = []
+    names = [c.get("name") for c in cols] if cols else None
+    out = []
     for r in data:
-        if col_names and len(col_names) == len(r):
-            rows.append({k: v for k, v in zip(col_names, r)})
+        if names and isinstance(r, list) and len(names) == len(r):
+            out.append({k: v for k, v in zip(names, r)})
         else:
-            rows.append({"row": r})
-    return rows
+            out.append({"row": r})
+    return out
 
 
-def _draft_answer_with_ai_query(model_name: str, question: str, retrieved_chunks: list[dict]) -> str:
-    # Conservative, citation-driven prompt; keep short for eval runs.
-    evidence_lines = []
-    for i, ch in enumerate(retrieved_chunks[:8], start=1):
-        cite = f"[C{i}] FY{ch.get('fiscal_year')} p{ch.get('page_start')}-{ch.get('page_end')}"
-        evidence_lines.append(cite + " " + (ch.get("chunk_text_en") or "")[:1200])
-    prompt = (
+def _draft_answer_with_ai_query(
+    model_name: str,
+    question: str,
+    retrieved_chunks: list[dict],
+    max_prompt_chars: int = 12000,
+) -> str:
+    header = (
         "You are a financial statement analyst. Answer in English and do not invent facts.\n"
         "Use ONLY the evidence below. If evidence is insufficient, say so.\n"
         "Cite every important claim using [C#].\n\n"
         f"QUESTION:\n{question}\n\n"
-        "EVIDENCE:\n" + "\n\n".join(evidence_lines)
+        "EVIDENCE:\n"
     )
-    # ai_query(endpoint, request_string)
+    chunks = retrieved_chunks[:8]
+    budget = max_prompt_chars - len(header)
+    chars_per_chunk = max(200, budget // max(len(chunks), 1) - 120)
+
+    evidence_lines = []
+    for i, ch in enumerate(chunks, start=1):
+        cite = f"[C{i}] FY{ch.get('fiscal_year')} p{ch.get('page_start')}-{ch.get('page_end')}"
+        evidence_lines.append(cite + " " + ((ch.get("chunk_text_en") or "")[:chars_per_chunk]))
+    prompt = header + "\n\n".join(evidence_lines)
+
     prompt_sql = json.dumps(prompt)
     sql = f"SELECT ai_query('{model_name}', {prompt_sql}) AS answer"
     out = spark.sql(sql).collect()[0]["answer"]
+    if not out or not out.strip():
+        raise RuntimeError(
+            f"ai_query('{model_name}', ...) returned empty/NULL. Prompt was {len(prompt)} chars (~{len(prompt)//4} tokens). "
+            "If this exceeds the model context window, reduce top_k or max_prompt_chars."
+        )
     return out
 
 
@@ -144,6 +162,7 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
     for i, ch in enumerate(retrieved_chunks[:8], start=1):
         cite = f"[C{i}] FY{ch.get('fiscal_year')} p{ch.get('page_start')}-{ch.get('page_end')}"
         evidence_lines.append(cite + " " + (ch.get("chunk_text_en") or "")[:1200])
+
     prompt = (
         "You are a financial statement analyst. Answer in English and do not invent facts.\n"
         "Use ONLY the evidence below. If evidence is insufficient, say so.\n"
@@ -188,9 +207,7 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
     return "".join(texts).strip()
 
 
-# COMMAND ----------
-
-vsc = VectorSearchClient()
+vsc = VectorSearchClient(disable_notice=True)
 index = vsc.get_index(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME)
 
 run_ts = datetime.now(timezone.utc)
@@ -208,7 +225,8 @@ columns = [
 ]
 
 rows_to_write = []
-for q in BENCHMARK_QUESTIONS:
+for qi, q in enumerate(BENCHMARK_QUESTIONS, start=1):
+    print(f"[{qi}/{len(BENCHMARK_QUESTIONS)}] {q[:80]}...")
     vs_resp = index.similarity_search(
         query_text=q,
         columns=columns,
@@ -246,6 +264,7 @@ for q in BENCHMARK_QUESTIONS:
             else:
                 answer = _draft_answer_with_ai_query(ANSWER_MODEL, q, retrieved_enriched)
         except Exception as e:
+            print(f"[ERROR] Q{qi}: {type(e).__name__}: {e}")
             log_pipeline_error(ERRORS_TABLE, stage="retrieval_eval_answer", error=e, extra={"question": q})
             answer = None
 
@@ -256,10 +275,7 @@ for q in BENCHMARK_QUESTIONS:
             "query_text": q,
             "top_k": TOP_K,
             "filters": FILTERS_RAW,
-            "retrieved_json": json.dumps(
-                {"vector_search_raw": vs_resp, "retrieved": retrieved_enriched},
-                ensure_ascii=True,
-            ),
+            "retrieved_json": json.dumps({"vector_search_raw": vs_resp, "retrieved": retrieved_enriched}, ensure_ascii=True),
             "answer_en": answer,
             "model_name": ANSWER_MODEL if ANSWER_MODE != "disabled" else None,
             "notes": None,
@@ -282,4 +298,13 @@ eval_schema = T.StructType(
 
 spark.createDataFrame(rows_to_write, schema=eval_schema).write.mode("append").saveAsTable(RETRIEVAL_EVAL_TABLE)
 
-display(spark.table(RETRIEVAL_EVAL_TABLE).orderBy(F.col("run_ts").desc()).limit(20))
+n_ok = sum(1 for r in rows_to_write if r["answer_en"])
+n_fail = len(rows_to_write) - n_ok
+print(f"\n=== Run complete: {n_ok}/{len(rows_to_write)} answers generated, {n_fail} failed ===\n")
+
+display(
+    spark.table(RETRIEVAL_EVAL_TABLE)
+    .filter(F.col("run_ts") == run_ts)
+    .orderBy(F.col("query_text"))
+)
+

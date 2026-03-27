@@ -61,6 +61,7 @@ dbutils.widgets.text("max_tokens", "900")
 QUESTION = dbutils.widgets.get("question").strip()
 _ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
 _ensure_text_widget("vs_index_name", DEFAULT_VS_INDEX, override_if={""})
+_ensure_text_widget("model_name", "databricks-gpt-oss-20b", override_if={"", "databricks-claude-sonnet-4-6", "databricks-claude-sonnet-4-5"})
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
 TOP_K = int(dbutils.widgets.get("top_k"))
@@ -71,6 +72,16 @@ MODEL_NAME = dbutils.widgets.get("model_name").strip()
 ANTHROPIC_PROXY_ENDPOINT = dbutils.widgets.get("anthropic_proxy_endpoint_name").strip()
 TEMPERATURE = float(dbutils.widgets.get("temperature"))
 MAX_TOKENS = int(dbutils.widgets.get("max_tokens"))
+
+# --- Python-level overrides for stale widget values ---
+# Dropdown widgets cannot be fixed via _ensure_text_widget; override the variable directly.
+_STALE_MODEL_NAMES = {"databricks-claude-sonnet-4-6", "databricks-claude-sonnet-4-5", ""}
+if MODEL_NAME in _STALE_MODEL_NAMES:
+    print(f"[override] Stale MODEL_NAME '{MODEL_NAME}' -> 'databricks-gpt-oss-20b'")
+    MODEL_NAME = "databricks-gpt-oss-20b"
+if LLM_MODE == "anthropic_messages":
+    print("[override] LLM_MODE 'anthropic_messages' -> 'ai_query' (Anthropic proxy not configured)")
+    LLM_MODE = "ai_query"
 
 print("QUESTION:", QUESTION)
 print("VS endpoint:", VS_ENDPOINT_NAME)
@@ -175,24 +186,13 @@ def get_retrieval_diagnostics() -> dict:
     }
 
 
-def build_prompt(question: str, chunks: list[dict]) -> str:
-    lines = []
-    for i, ch in enumerate(chunks, start=1):
-        cite = f"[C{i}] FY{ch['fiscal_year']} p{ch['page_start']}-{ch['page_end']} {ch['file_name']}"
-        en = (ch.get("chunk_text_en") or "").strip()
-        fr = (ch.get("chunk_text_fr") or "").strip()
-        # Keep prompt size bounded; the Delta table retains full text for audit.
-        en = en[:1600]
-        fr = fr[:900]
-        lines.append(
-            cite
-            + "\nEN:\n"
-            + en
-            + "\n\nFR (original):\n"
-            + fr
-        )
+def build_prompt(question: str, chunks: list[dict], max_prompt_chars: int = 12000) -> str:
+    """Build a prompt that fits within a character budget.
 
-    return (
+    Uses English evidence only (not French) to stay within smaller model context windows.
+    Progressively trims chunk text length if the total would exceed max_prompt_chars.
+    """
+    header = (
         "You are a conservative financial statement analyst.\n"
         "Answer in English. Do not invent facts.\n"
         "Use ONLY the evidence provided. If the evidence is insufficient, say so and list what is missing.\n"
@@ -200,8 +200,20 @@ def build_prompt(question: str, chunks: list[dict]) -> str:
         "Do not cite sources you did not use.\n\n"
         f"QUESTION:\n{question}\n\n"
         "EVIDENCE:\n"
-        + "\n\n---\n\n".join(lines)
     )
+    overhead_per_chunk = 120  # citation line + separators
+    budget = max_prompt_chars - len(header)
+    chars_per_chunk = max(200, budget // max(len(chunks), 1) - overhead_per_chunk)
+
+    lines = []
+    for i, ch in enumerate(chunks, start=1):
+        cite = f"[C{i}] FY{ch['fiscal_year']} p{ch['page_start']}-{ch['page_end']} {ch['file_name']}"
+        en = (ch.get("chunk_text_en") or "").strip()[:chars_per_chunk]
+        lines.append(cite + "\n" + en)
+
+    prompt = header + "\n\n---\n\n".join(lines)
+    print(f"[build_prompt] {len(chunks)} chunks, {len(prompt)} chars (~{len(prompt)//4} tokens est.)")
+    return prompt
 
 
 class _AnthropicProxyNotFound(RuntimeError):
@@ -248,13 +260,17 @@ def call_llm_anthropic_messages(prompt: str) -> str:
 
 
 def call_llm_ai_query(prompt: str) -> str:
-    # ai_query(endpoint, request_string, modelParameters => named_struct(...))
     prompt_sql = json.dumps(prompt)
-    sql = (
-        f"SELECT ai_query('{MODEL_NAME}', {prompt_sql}, "
-        f"modelParameters => named_struct('max_tokens', {MAX_TOKENS}, 'temperature', {TEMPERATURE})) AS out"
-    )
-    return spark.sql(sql).collect()[0]["out"]
+    sql = f"SELECT ai_query('{MODEL_NAME}', {prompt_sql}) AS out"
+    print(f"[ai_query] model={MODEL_NAME}, prompt_chars={len(prompt)}")
+    raw = spark.sql(sql).collect()[0]["out"]
+    if not raw or not raw.strip():
+        raise RuntimeError(
+            f"ai_query('{MODEL_NAME}', ...) returned empty/NULL. "
+            f"Prompt was {len(prompt)} chars (~{len(prompt)//4} tokens). "
+            "If this exceeds the model context window, reduce top_k or max_prompt_chars."
+        )
+    return raw
 
 
 # COMMAND ----------
