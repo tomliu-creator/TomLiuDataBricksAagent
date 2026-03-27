@@ -46,8 +46,9 @@ dbutils.widgets.text("top_k", "8")
 dbutils.widgets.text("filters", "")  # e.g. {"fiscal_year >= 2020": "..."} is index-dependent; keep empty for pilot
 
 # Optional: generate a draft answer for each query.
-dbutils.widgets.dropdown("answer_mode", "anthropic_messages", ["anthropic_messages", "ai_query", "disabled"])
+dbutils.widgets.dropdown("answer_mode", "ai_query", ["anthropic_messages", "ai_query", "disabled"])
 dbutils.widgets.text("answer_model_name", "databricks-claude-sonnet-4-6")  # change if not enabled in workspace
+dbutils.widgets.text("anthropic_proxy_endpoint_name", "anthropic")
 
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
@@ -55,6 +56,7 @@ TOP_K = int(dbutils.widgets.get("top_k"))
 FILTERS_RAW = dbutils.widgets.get("filters").strip() or None
 ANSWER_MODE = dbutils.widgets.get("answer_mode").strip()
 ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
+ANTHROPIC_PROXY_ENDPOINT = dbutils.widgets.get("anthropic_proxy_endpoint_name").strip()
 
 # If you previously used the template endpoint name, auto-switch to the configured default.
 _ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "vs_fin_agent"})
@@ -76,6 +78,7 @@ print("VS index:", VS_INDEX_NAME)
 print("TOP_K:", TOP_K)
 print("ANSWER_MODE:", ANSWER_MODE)
 print("ANSWER_MODEL:", ANSWER_MODEL or "(unset)")
+print("ANTHROPIC_PROXY_ENDPOINT:", ANTHROPIC_PROXY_ENDPOINT)
 
 # COMMAND ----------
 
@@ -159,7 +162,10 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
     if not token:
         raise RuntimeError("Unable to obtain a Databricks token for Anthropic proxy calls.")
 
-    url = f"https://{host}/serving-endpoints/anthropic/v1/messages"
+    if not ANTHROPIC_PROXY_ENDPOINT:
+        raise RuntimeError("Anthropic proxy endpoint name is empty.")
+
+    url = f"https://{host}/serving-endpoints/{ANTHROPIC_PROXY_ENDPOINT}/v1/messages"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
         "model": model_name,
@@ -169,6 +175,8 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
     }
 
     resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    if resp.status_code == 404:
+        raise RuntimeError(f"Anthropic proxy endpoint '{ANTHROPIC_PROXY_ENDPOINT}' not found (404).")
     if resp.status_code >= 400:
         raise RuntimeError(f"Anthropic proxy call failed: {resp.status_code} {resp.text[:2000]}")
     data = resp.json()

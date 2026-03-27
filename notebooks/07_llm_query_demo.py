@@ -17,7 +17,7 @@
 # MAGIC 4) Cite the original French chunks/pages in the output
 
 # COMMAND ----------
-# MAGIC %pip install -U databricks-vectorsearch anthropic
+# MAGIC %pip install -U databricks-vectorsearch
 
 # COMMAND ----------
 
@@ -54,6 +54,7 @@ dbutils.widgets.text("filters", "")  # optional Vector Search filters
 
 dbutils.widgets.dropdown("llm_mode", "anthropic_messages", ["anthropic_messages", "ai_query"])
 dbutils.widgets.text("model_name", "databricks-claude-sonnet-4-6")
+dbutils.widgets.text("anthropic_proxy_endpoint_name", "anthropic")  # set if your workspace uses a different proxy endpoint
 dbutils.widgets.text("temperature", "0.1")
 dbutils.widgets.text("max_tokens", "900")
 
@@ -67,6 +68,7 @@ FILTERS_RAW = dbutils.widgets.get("filters").strip() or None
 
 LLM_MODE = dbutils.widgets.get("llm_mode").strip()
 MODEL_NAME = dbutils.widgets.get("model_name").strip()
+ANTHROPIC_PROXY_ENDPOINT = dbutils.widgets.get("anthropic_proxy_endpoint_name").strip()
 TEMPERATURE = float(dbutils.widgets.get("temperature"))
 MAX_TOKENS = int(dbutils.widgets.get("max_tokens"))
 
@@ -75,6 +77,7 @@ print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
 print("LLM_MODE:", LLM_MODE)
 print("MODEL_NAME:", MODEL_NAME)
+print("ANTHROPIC_PROXY_ENDPOINT:", ANTHROPIC_PROXY_ENDPOINT)
 
 # COMMAND ----------
 
@@ -201,6 +204,10 @@ def build_prompt(question: str, chunks: list[dict]) -> str:
     )
 
 
+class _AnthropicProxyNotFound(RuntimeError):
+    pass
+
+
 def call_llm_anthropic_messages(prompt: str) -> str:
     ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
     host = ctx.browserHostName().get()
@@ -212,7 +219,10 @@ def call_llm_anthropic_messages(prompt: str) -> str:
     if not token:
         raise RuntimeError("Unable to obtain a Databricks token. Set env var DATABRICKS_TOKEN or enable context apiToken().")
 
-    url = f"https://{host}/serving-endpoints/anthropic/v1/messages"
+    if not ANTHROPIC_PROXY_ENDPOINT:
+        raise _AnthropicProxyNotFound("Anthropic proxy endpoint name is empty.")
+
+    url = f"https://{host}/serving-endpoints/{ANTHROPIC_PROXY_ENDPOINT}/v1/messages"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
         "model": MODEL_NAME,
@@ -222,6 +232,10 @@ def call_llm_anthropic_messages(prompt: str) -> str:
     }
 
     resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    if resp.status_code == 404:
+        raise _AnthropicProxyNotFound(
+            f"Anthropic proxy endpoint '{ANTHROPIC_PROXY_ENDPOINT}' not found (404)."
+        )
     if resp.status_code >= 400:
         raise RuntimeError(f"Anthropic proxy call failed: {resp.status_code} {resp.text[:2000]}")
     data = resp.json()
@@ -262,7 +276,12 @@ prompt = build_prompt(QUESTION, retrieved)
 answer = None
 try:
     if LLM_MODE == "anthropic_messages":
-        answer = call_llm_anthropic_messages(prompt)
+        try:
+            answer = call_llm_anthropic_messages(prompt)
+        except _AnthropicProxyNotFound as e:
+            print("Anthropic proxy unavailable:", str(e))
+            print("Falling back to ai_query with model_name =", MODEL_NAME)
+            answer = call_llm_ai_query(prompt)
     else:
         answer = call_llm_ai_query(prompt)
 except Exception as e:
