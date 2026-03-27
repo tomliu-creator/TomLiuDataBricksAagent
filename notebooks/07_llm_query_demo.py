@@ -26,6 +26,11 @@ import os
 from datetime import datetime, timezone
 
 from databricks.vector_search.client import VectorSearchClient
+from pyspark.sql import functions as F
+
+# If you restarted Python or ran cells out of order, helpers from `_utils` may be missing.
+if "log_pipeline_error" not in globals():
+    raise RuntimeError("Missing `log_pipeline_error`. Rerun the notebook from the top so `%run ./_utils` executes.")
 
 def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
     try:
@@ -257,7 +262,11 @@ try:
     else:
         answer = call_llm_ai_query(prompt)
 except Exception as e:
-    log_pipeline_error(ERRORS_TABLE, stage="llm_query", error=e, extra={"llm_mode": LLM_MODE, "model": MODEL_NAME})
+    # Don't mask the root cause if `_utils` wasn't loaded in this Python session.
+    try:
+        log_pipeline_error(ERRORS_TABLE, stage="llm_query", error=e, extra={"llm_mode": LLM_MODE, "model": MODEL_NAME})
+    except Exception:
+        print("LLM call failed (unable to log to pipeline_errors):", repr(e))
     raise
 
 print("\n=== Answer (English) ===\n")
