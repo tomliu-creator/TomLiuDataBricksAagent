@@ -20,6 +20,7 @@
 import uuid
 import json
 from datetime import datetime, timezone
+import os
 from pyspark.sql import types as T
 from pyspark.sql import functions as F
 from databricks.vector_search.client import VectorSearchClient
@@ -42,13 +43,15 @@ dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
 dbutils.widgets.text("top_k", "8")
 dbutils.widgets.text("filters", "")  # e.g. {"fiscal_year >= 2020": "..."} is index-dependent; keep empty for pilot
 
-# Optional: generate a draft answer for each query via ai_query(model, prompt).
-dbutils.widgets.text("answer_model_name", "")  # e.g. databricks-claude-sonnet-4-6 (if enabled)
+# Optional: generate a draft answer for each query.
+dbutils.widgets.dropdown("answer_mode", "anthropic_messages", ["anthropic_messages", "ai_query", "disabled"])
+dbutils.widgets.text("answer_model_name", "databricks-claude-sonnet-4-6")  # change if not enabled in workspace
 
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
 TOP_K = int(dbutils.widgets.get("top_k"))
 FILTERS_RAW = dbutils.widgets.get("filters").strip() or None
+ANSWER_MODE = dbutils.widgets.get("answer_mode").strip()
 ANSWER_MODEL = dbutils.widgets.get("answer_model_name").strip() or None
 
 # If you previously used the template endpoint name, auto-switch to the configured default.
@@ -58,7 +61,8 @@ VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
 print("TOP_K:", TOP_K)
-print("ANSWER_MODEL:", ANSWER_MODEL or "(disabled)")
+print("ANSWER_MODE:", ANSWER_MODE)
+print("ANSWER_MODEL:", ANSWER_MODEL or "(unset)")
 
 # COMMAND ----------
 
@@ -119,6 +123,46 @@ def _draft_answer_with_ai_query(model_name: str, question: str, retrieved_chunks
     return out
 
 
+def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrieved_chunks: list[dict]) -> str:
+    import anthropic
+
+    evidence_lines = []
+    for i, ch in enumerate(retrieved_chunks[:8], start=1):
+        cite = f"[C{i}] FY{ch.get('fiscal_year')} p{ch.get('page_start')}-{ch.get('page_end')}"
+        evidence_lines.append(cite + " " + (ch.get("chunk_text_en") or "")[:1200])
+    prompt = (
+        "You are a financial statement analyst. Answer in English and do not invent facts.\n"
+        "Use ONLY the evidence below. If evidence is insufficient, say so.\n"
+        "Cite every important claim using [C#].\n\n"
+        f"QUESTION:\n{question}\n\n"
+        "EVIDENCE:\n" + "\n\n".join(evidence_lines)
+    )
+
+    ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+    host = ctx.browserHostName().get()
+    token = None
+    try:
+        token = ctx.apiToken().get()
+    except Exception:
+        token = os.environ.get("DATABRICKS_TOKEN")
+    if not token:
+        raise RuntimeError("Unable to obtain a Databricks token for Anthropic proxy calls.")
+
+    client = anthropic.Anthropic(
+        api_key="unused",
+        base_url=f"https://{host}/serving-endpoints/anthropic",
+        default_headers={"Authorization": f"Bearer {token}"},
+    )
+
+    msg = client.messages.create(
+        model=model_name,
+        max_tokens=650,
+        temperature=0.1,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join([blk.text for blk in msg.content if getattr(blk, "text", None)])
+
+
 # COMMAND ----------
 
 vsc = VectorSearchClient()
@@ -170,9 +214,12 @@ for q in BENCHMARK_QUESTIONS:
         retrieved_enriched.append(out)
 
     answer = None
-    if ANSWER_MODEL:
+    if ANSWER_MODE != "disabled" and ANSWER_MODEL:
         try:
-            answer = _draft_answer_with_ai_query(ANSWER_MODEL, q, retrieved_enriched)
+            if ANSWER_MODE == "anthropic_messages":
+                answer = _draft_answer_with_anthropic_messages(ANSWER_MODEL, q, retrieved_enriched)
+            else:
+                answer = _draft_answer_with_ai_query(ANSWER_MODEL, q, retrieved_enriched)
         except Exception as e:
             log_pipeline_error(ERRORS_TABLE, stage="retrieval_eval_answer", error=e, extra={"question": q})
             answer = None
@@ -189,7 +236,7 @@ for q in BENCHMARK_QUESTIONS:
                 ensure_ascii=True,
             ),
             "answer_en": answer,
-            "model_name": ANSWER_MODEL,
+            "model_name": ANSWER_MODEL if ANSWER_MODE != "disabled" else None,
             "notes": None,
         }
     )
