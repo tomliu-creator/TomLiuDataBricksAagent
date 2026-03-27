@@ -1,4 +1,5 @@
 # Databricks notebook source
+# NOTEBOOK FILE: _config.py
 # This notebook is intended to be `%run` from the pipeline notebooks.
 
 # COMMAND ----------

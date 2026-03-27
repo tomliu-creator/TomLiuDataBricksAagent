@@ -1,4 +1,5 @@
 # Databricks notebook source
+# NOTEBOOK FILE: 07_llm_query_demo.py
 # COMMAND ----------
 # MAGIC %run ./_config
 

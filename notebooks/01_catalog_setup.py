@@ -1,4 +1,5 @@
 # Databricks notebook source
+# NOTEBOOK FILE: 01_catalog_setup.py
 # COMMAND ----------
 # MAGIC %run ./_config
 

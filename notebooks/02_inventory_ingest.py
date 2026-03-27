@@ -1,4 +1,5 @@
 # Databricks notebook source
+# NOTEBOOK FILE: 02_inventory_ingest.py
 # COMMAND ----------
 # MAGIC %run ./_config
 

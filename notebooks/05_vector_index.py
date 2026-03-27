@@ -1,4 +1,5 @@
 # Databricks notebook source
+# NOTEBOOK FILE: 05_vector_index.py
 # COMMAND ----------
 # MAGIC %run ./_config
 
