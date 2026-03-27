@@ -120,7 +120,14 @@ def show_validation_snapshot(catalog: str, schema: str):
         ("chunks_translate_pending", _safe_count(f"SELECT count(*) FROM {chunks} WHERE translate_status = 'pending'")),
         ("chunks_index_pending", _safe_count(f"SELECT count(*) FROM {chunks} WHERE index_status = 'pending'")),
     ]
-    df = spark.createDataFrame(rows, ["metric", "value"])
+    schema = T.StructType(
+        [
+            T.StructField("metric", T.StringType(), nullable=False),
+            T.StructField("value", T.LongType(), nullable=True),
+        ]
+    )
+    # Explicit schema avoids Spark inference failures when all `value` entries are NULL.
+    df = spark.createDataFrame(rows, schema=schema)
     try:
         display(df)
     except Exception:
