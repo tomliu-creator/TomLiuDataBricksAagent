@@ -18,19 +18,18 @@
 
 # COMMAND ----------
 # MAGIC %pip install -U PyMuPDF
-# MAGIC
-# MAGIC # If `import fitz` still fails after install, use: Runtime -> Restart Python
-# MAGIC # Then rerun this notebook from the top.
+
+# COMMAND ----------
+# MAGIC # Databricks often needs a Python restart after %pip installs to pick up new modules.
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
 try:
-    import fitz  # PyMuPDF exposes the `fitz` module
-except ModuleNotFoundError as e:
-    raise ModuleNotFoundError(
-        "PyMuPDF is not available (`import fitz` failed). Run the %pip cell to install PyMuPDF, then Restart Python, "
-        "then rerun this notebook from the top."
-    ) from e
+    import fitz  # PyMuPDF
+except Exception:
+    # Newer PyMuPDF versions also expose `pymupdf` as the import name.
+    import pymupdf as fitz
 
 MAX_DOCS = None  # set to an int for debugging (e.g. 2)
 
@@ -82,7 +81,6 @@ for d in docs:
                     "page_text_fr": text,
                     "page_char_count": len(text),
                     "parse_method": "pymupdf_text",
-                    "parse_ts": None,  # set after DF creation
                 }
             )
         pdf.close()
@@ -106,7 +104,22 @@ if len(page_rows) == 0:
 
 # COMMAND ----------
 
-df_pages = spark.createDataFrame(page_rows).withColumn("parse_ts", F.current_timestamp())
+pages_schema = T.StructType(
+    [
+        T.StructField("document_id", T.StringType(), nullable=False),
+        T.StructField("fiscal_year", T.IntegerType(), nullable=True),
+        T.StructField("file_name", T.StringType(), nullable=True),
+        T.StructField("source_path_dbfs", T.StringType(), nullable=True),
+        T.StructField("source_path_local", T.StringType(), nullable=True),
+        T.StructField("page_num", T.IntegerType(), nullable=False),
+        T.StructField("page_text_fr", T.StringType(), nullable=True),
+        T.StructField("page_char_count", T.IntegerType(), nullable=True),
+        T.StructField("parse_method", T.StringType(), nullable=True),
+    ]
+)
+
+# Explicit schema avoids Spark inference errors (e.g., columns that would otherwise be all-NULL).
+df_pages = spark.createDataFrame(page_rows, schema=pages_schema).withColumn("parse_ts", F.current_timestamp())
 df_pages.createOrReplaceTempView("new_pages")
 
 # Remove stale pages for successfully parsed documents (handles PDFs whose page count changed).
