@@ -87,6 +87,23 @@ spark.sql(f"ALTER TABLE {CHUNKS_TABLE} SET TBLPROPERTIES (delta.enableChangeData
 vsc = VectorSearchClient()
 
 if not vsc.endpoint_exists(VS_ENDPOINT_NAME):
+    existing = vsc.list_endpoints()
+    existing_names = []
+    for e in existing or []:
+        if isinstance(e, dict):
+            existing_names.append(e.get("name") or e.get("endpoint_name") or str(e))
+        else:
+            existing_names.append(str(e))
+    existing_names = [n for n in existing_names if n]
+
+    if existing_names:
+        raise ValueError(
+            f"Vector Search endpoint '{VS_ENDPOINT_NAME}' does not exist, but this workspace already has "
+            f"endpoint(s) {existing_names} and the endpoint quota is exceeded (max 1). "
+            f"Set the notebook widget 'vs_endpoint_name' to an existing endpoint (for example '{existing_names[0]}') "
+            f"and rerun."
+        )
+
     print("Creating Vector Search endpoint:", VS_ENDPOINT_NAME)
     vsc.create_endpoint_and_wait(name=VS_ENDPOINT_NAME, endpoint_type="STANDARD")
 else:
