@@ -383,6 +383,7 @@ else:
         print(narrative)
     except Exception as e:
         print(f"[narrative] ERROR generating narrative: {e}")
+        narrative = None
         try:
             log_pipeline_error(
                 ERRORS_TABLE,
@@ -391,3 +392,98 @@ else:
             )
         except Exception:
             pass
+#
+# # COMMAND ----------
+# # MAGIC %md
+# # MAGIC ### LaTeX Output
+#
+# # COMMAND ----------
+#
+#
+# def _latex_escape(text: str) -> str:
+#     """Escape characters that break LaTeX table cells."""
+#     if not text:
+#         return ""
+#     for ch, repl in [
+#         ("\\", r"\textbackslash{}"),
+#         ("&", r"\&"),
+#         ("%", r"\%"),
+#         ("$", r"\$"),
+#         ("#", r"\#"),
+#         ("_", r"\_"),
+#         ("{", r"\{"),
+#         ("}", r"\}"),
+#         ("~", r"\textasciitilde{}"),
+#         ("^", r"\textasciicircum{}"),
+#     ]:
+#         text = text.replace(ch, repl)
+#     return text
+#
+#
+# def build_latex(results: dict, obs_categories: list, all_years: list, narrative: str | None) -> str:
+#     """Build a self-contained LaTeX document with the OBS table and narrative."""
+#     n_years = len(all_years)
+#     col_spec = "p{4.5cm}" + "p{" + f"{13.5 / max(n_years, 1):.1f}" + "cm}" * n_years
+#
+#     # Header row
+#     year_headers = " & ".join(r"\textbf{" + str(y) + "}" for y in all_years)
+#     header_row = r"\textbf{Category} & " + year_headers + r" \\"
+#
+#     # Data rows
+#     data_rows = []
+#     for cat in obs_categories:
+#         name = cat["name"]
+#         findings = results.get(name, {})
+#         cells = [_latex_escape(name)]
+#         for yr in all_years:
+#             text = findings.get(yr, "---")
+#             # Keep cells short: first sentence only, max 120 chars
+#             sentence = text.split(".")[0].strip()
+#             if len(sentence) > 120:
+#                 sentence = sentence[:117] + "..."
+#             cells.append(_latex_escape(sentence))
+#         data_rows.append(" & ".join(cells) + r" \\")
+#         data_rows.append(r"\hline")
+#
+#     narrative_section = ""
+#     if narrative:
+#         # Split into paragraphs
+#         paras = [p.strip() for p in narrative.split("\n") if p.strip()]
+#         narrative_section = (
+#             "\n\\vspace{1em}\n"
+#             "\\noindent\\textbf{Narrative Analysis}\n\n"
+#             "\\vspace{0.5em}\n"
+#             + "\n\n".join(_latex_escape(p) for p in paras)
+#         )
+#
+#     return r"""\documentclass[a4paper,10pt]{article}
+# \usepackage[margin=1.5cm]{geometry}
+# \usepackage{booktabs}
+# \usepackage{array}
+# \usepackage{longtable}
+# \usepackage{microtype}
+# \usepackage{parskip}
+#
+# \begin{document}
+#
+# \section*{Off-Balance-Sheet Liability Study --- Parts Holding Europe}
+#
+# \begin{longtable}{""" + col_spec + r"""}
+# \toprule
+# """ + header_row + r"""
+# \midrule
+# \endhead
+# """ + "\n".join(data_rows) + r"""
+# \bottomrule
+# \end{longtable}
+# """ + narrative_section + r"""
+#
+# \end{document}
+# """
+#
+#
+# if all_years:
+#     latex_output = build_latex(results, OBS_CATEGORIES, all_years, narrative if "narrative" in dir() else None)
+#     print(latex_output)
+# else:
+#     print("[latex] No data — skipping LaTeX output.")

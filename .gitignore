@@ -1,5 +1,6 @@
 .venv/
 .idea/
+.claude/
 notebooks/__pycache__/
 **/__pycache__/
 *.pyc
