@@ -88,13 +88,24 @@ vsc = VectorSearchClient()
 
 if not vsc.endpoint_exists(VS_ENDPOINT_NAME):
     existing = vsc.list_endpoints()
+    if isinstance(existing, dict) and "endpoints" in existing:
+        endpoints = existing.get("endpoints") or []
+    elif isinstance(existing, list):
+        endpoints = existing
+    else:
+        endpoints = []
+
     existing_names = []
-    for e in existing or []:
+    for e in endpoints:
         if isinstance(e, dict):
-            existing_names.append(e.get("name") or e.get("endpoint_name") or str(e))
-        else:
-            existing_names.append(str(e))
-    existing_names = [n for n in existing_names if n]
+            n = e.get("name") or e.get("endpoint_name") or e.get("endpointName")
+            if n:
+                existing_names.append(n)
+        elif isinstance(e, str) and e.strip():
+            existing_names.append(e.strip())
+
+    # De-dup + drop obvious garbage.
+    existing_names = sorted({n for n in existing_names if n and n != "endpoints"})
 
     if existing_names:
         raise ValueError(
