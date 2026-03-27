@@ -22,6 +22,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 import os
+import requests
 from pyspark.sql import types as T
 from pyspark.sql import functions as F
 from databricks.vector_search.client import VectorSearchClient
@@ -136,8 +137,6 @@ def _draft_answer_with_ai_query(model_name: str, question: str, retrieved_chunks
 
 
 def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrieved_chunks: list[dict]) -> str:
-    import anthropic
-
     evidence_lines = []
     for i, ch in enumerate(retrieved_chunks[:8], start=1):
         cite = f"[C{i}] FY{ch.get('fiscal_year')} p{ch.get('page_start')}-{ch.get('page_end')}"
@@ -160,19 +159,25 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
     if not token:
         raise RuntimeError("Unable to obtain a Databricks token for Anthropic proxy calls.")
 
-    client = anthropic.Anthropic(
-        api_key="unused",
-        base_url=f"https://{host}/serving-endpoints/anthropic",
-        default_headers={"Authorization": f"Bearer {token}"},
-    )
+    url = f"https://{host}/serving-endpoints/anthropic/v1/messages"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "model": model_name,
+        "max_tokens": 650,
+        "temperature": 0.1,
+        "messages": [{"role": "user", "content": prompt}],
+    }
 
-    msg = client.messages.create(
-        model=model_name,
-        max_tokens=650,
-        temperature=0.1,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return "".join([blk.text for blk in msg.content if getattr(blk, "text", None)])
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Anthropic proxy call failed: {resp.status_code} {resp.text[:2000]}")
+    data = resp.json()
+    blocks = data.get("content") or []
+    texts = []
+    for b in blocks:
+        if isinstance(b, dict) and b.get("text"):
+            texts.append(b["text"])
+    return "".join(texts).strip()
 
 
 # COMMAND ----------

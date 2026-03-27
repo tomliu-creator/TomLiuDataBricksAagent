@@ -25,6 +25,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+import requests
 from databricks.vector_search.client import VectorSearchClient
 from pyspark.sql import functions as F
 
@@ -201,8 +202,6 @@ def build_prompt(question: str, chunks: list[dict]) -> str:
 
 
 def call_llm_anthropic_messages(prompt: str) -> str:
-    import anthropic
-
     ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
     host = ctx.browserHostName().get()
     token = None
@@ -213,20 +212,25 @@ def call_llm_anthropic_messages(prompt: str) -> str:
     if not token:
         raise RuntimeError("Unable to obtain a Databricks token. Set env var DATABRICKS_TOKEN or enable context apiToken().")
 
-    client = anthropic.Anthropic(
-        api_key="unused",
-        base_url=f"https://{host}/serving-endpoints/anthropic",
-        default_headers={"Authorization": f"Bearer {token}"},
-    )
+    url = f"https://{host}/serving-endpoints/anthropic/v1/messages"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "model": MODEL_NAME,
+        "max_tokens": MAX_TOKENS,
+        "temperature": TEMPERATURE,
+        "messages": [{"role": "user", "content": prompt}],
+    }
 
-    msg = client.messages.create(
-        model=MODEL_NAME,
-        max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    # Anthropic SDK returns structured content blocks
-    return "".join([blk.text for blk in msg.content if getattr(blk, "text", None)])
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Anthropic proxy call failed: {resp.status_code} {resp.text[:2000]}")
+    data = resp.json()
+    blocks = data.get("content") or []
+    texts = []
+    for b in blocks:
+        if isinstance(b, dict) and b.get("text"):
+            texts.append(b["text"])
+    return "".join(texts).strip()
 
 
 def call_llm_ai_query(prompt: str) -> str:
