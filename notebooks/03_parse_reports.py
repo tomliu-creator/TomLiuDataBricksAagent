@@ -18,18 +18,19 @@
 
 # COMMAND ----------
 # MAGIC %pip install -U PyMuPDF
-
-# COMMAND ----------
-# MAGIC # Databricks often needs a Python restart after %pip installs to pick up new modules.
-# MAGIC dbutils.library.restartPython()
+# MAGIC
+# MAGIC # If `import fitz` still fails after install, use: Runtime -> Restart Python
+# MAGIC # Then rerun this notebook from the top.
 
 # COMMAND ----------
 
 try:
-    import fitz  # PyMuPDF
-except Exception:
-    # Newer PyMuPDF versions also expose `pymupdf` as the import name.
-    import pymupdf as fitz
+    import fitz  # PyMuPDF exposes the `fitz` module
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        "PyMuPDF is not available (`import fitz` failed). Run the %pip cell to install PyMuPDF, then Restart Python, "
+        "then rerun this notebook from the top."
+    ) from e
 
 MAX_DOCS = None  # set to an int for debugging (e.g. 2)
 
