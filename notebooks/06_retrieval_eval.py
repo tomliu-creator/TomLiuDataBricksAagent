@@ -91,18 +91,21 @@ print("ANTHROPIC_PROXY_ENDPOINT:", ANTHROPIC_PROXY_ENDPOINT)
 
 
 BENCHMARK_QUESTIONS = [
-    "Summarize the company's debt maturity profile and any refinancing risk disclosed.",
-    "What covenants are disclosed for the main financing facilities, and were there any covenant breaches or waivers?",
+    "Summarize the company’s debt maturity profile and any refinancing risk disclosed.",
+    "What covenants are disclosed for the main financing facilities, and were there any covenant breaches, cures, resets, or waivers?",
     "Describe lease liabilities and major lease commitments (IFRS 16), including maturity if disclosed.",
-    "Is there any discussion of factoring, securitization, or off-balance-sheet financing exposure? Provide details and risks.",
+    "Is there any discussion of factoring, receivables sales, securitization, or off-balance-sheet financing exposure? Provide details, accounting treatment, retained risk, and credit implications.",
+    "Is there any supplier finance, reverse factoring, payable financing, or similar working-capital arrangement? Explain the size, structure, and debt-like risk.",
+    "Identify all guarantees, indemnities, letters of comfort, letters of credit, performance bonds, or similar support arrangements. Summarize size, beneficiaries, triggers, and risk.",
+    "Are there any unconsolidated entities, joint ventures, associates, or special-purpose vehicles that create funding commitments, guarantees, or contingent obligations for the group?",
+    "What non-cancellable purchase commitments, take-or-pay agreements, capex commitments, or other contractual obligations are disclosed outside reported borrowings?",
+    "Summarize liquidity risk management and any disclosures about cash, credit lines, headroom, and dependence on receivables monetization or short-term facilities.",
+    "Identify major provisions and contingent liabilities, including litigation, restructuring, tax, environmental, warranty, and guarantee-related exposures, and explain how they evolved.",
     "What goodwill balances are reported and what impairment tests or key assumptions are disclosed?",
     "Did the auditor include any emphasis-of-matter, key audit matters, or going-concern language? Summarize the most important items.",
-    "Describe acquisition-related disclosures (business combinations) and how they impacted debt, goodwill, and cash flows.",
-    "Summarize liquidity risk management and any disclosures about cash, credit lines, and headroom.",
-    "Identify any major provisions and contingent liabilities (litigation, restructuring, guarantees) and how they evolved.",
-    "Explain any significant changes in accounting policies or estimates that materially affect comparability across years.",
+    "Describe acquisition-related disclosures (business combinations) and how they impacted debt, goodwill, contingent consideration, guarantees, and cash flows.",
+    "Explain any significant changes in accounting policies, estimates, or consolidation perimeter that materially affect comparability or could shift obligations on or off the balance sheet."
 ]
-
 
 def _vs_extract_rows(vs_response: dict) -> list[dict]:
     if not isinstance(vs_response, dict):
@@ -209,6 +212,32 @@ def _draft_answer_with_anthropic_messages(model_name: str, question: str, retrie
 
 vsc = VectorSearchClient(disable_notice=True)
 index = vsc.get_index(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME)
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ### Pipeline Health Check
+
+# COMMAND ----------
+
+_total = spark.table(CHUNKS_TABLE).count()
+_has_en = spark.table(CHUNKS_TABLE).filter(
+    F.col("chunk_text_en").isNotNull() & (F.length(F.col("chunk_text_en")) > 0)
+).count()
+_idx_done = spark.table(CHUNKS_TABLE).filter(F.col("index_status") == "done").count()
+print(f"[health] Total chunks: {_total}")
+print(f"[health] Chunks with English text: {_has_en} ({100*_has_en//_total if _total else 0}%)")
+print(f"[health] Missing English: {_total - _has_en}")
+print(f"[health] Index status=done: {_idx_done}")
+try:
+    _idx_info = index.describe()
+    _status = _idx_info.get("status", {}).get("detailed_state", _idx_info.get("status", {}))
+    _num_indexed = _idx_info.get("status", {}).get("indexed_row_count", "?")
+    print(f"[health] VS index state: {_status}")
+    print(f"[health] VS indexed rows: {_num_indexed}")
+except Exception as _e:
+    print(f"[health] Could not describe index: {_e}")
+
+# COMMAND ----------
 
 run_ts = datetime.now(timezone.utc)
 
