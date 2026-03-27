@@ -84,6 +84,17 @@ spark.sql(f"ALTER TABLE {CHUNKS_TABLE} SET TBLPROPERTIES (delta.enableChangeData
 
 # COMMAND ----------
 
+# Re-read widgets here so manual widget edits in later cells are respected
+# (Databricks notebooks often run cells out of order during debugging).
+VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
+VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
+EMBEDDING_MODEL_ENDPOINT = dbutils.widgets.get("embedding_model_endpoint_name").strip()
+PIPELINE_TYPE = dbutils.widgets.get("pipeline_type").strip().upper()
+
+print("VS endpoint (effective):", VS_ENDPOINT_NAME)
+print("VS index (effective):", VS_INDEX_NAME)
+print("Embedding model (effective):", EMBEDDING_MODEL_ENDPOINT)
+
 vsc = VectorSearchClient()
 
 if not vsc.endpoint_exists(VS_ENDPOINT_NAME):
