@@ -20,6 +20,7 @@
 import uuid
 import json
 from datetime import datetime, timezone
+from pyspark.sql import types as T
 from databricks.vector_search.client import VectorSearchClient
 
 def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
@@ -192,6 +193,20 @@ for q in BENCHMARK_QUESTIONS:
         }
     )
 
-spark.createDataFrame(rows_to_write).write.mode("append").saveAsTable(RETRIEVAL_EVAL_TABLE)
+eval_schema = T.StructType(
+    [
+        T.StructField("run_id", T.StringType(), nullable=False),
+        T.StructField("run_ts", T.TimestampType(), nullable=False),
+        T.StructField("query_text", T.StringType(), nullable=False),
+        T.StructField("top_k", T.IntegerType(), nullable=False),
+        T.StructField("filters", T.StringType(), nullable=True),
+        T.StructField("retrieved_json", T.StringType(), nullable=True),
+        T.StructField("answer_en", T.StringType(), nullable=True),
+        T.StructField("model_name", T.StringType(), nullable=True),
+        T.StructField("notes", T.StringType(), nullable=True),
+    ]
+)
+
+spark.createDataFrame(rows_to_write, schema=eval_schema).write.mode("append").saveAsTable(RETRIEVAL_EVAL_TABLE)
 
 display(spark.table(RETRIEVAL_EVAL_TABLE).orderBy(F.col("run_ts").desc()).limit(20))
