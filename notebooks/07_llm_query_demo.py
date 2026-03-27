@@ -139,6 +139,25 @@ def retrieve_chunks(question: str, top_k: int) -> list[dict]:
     return ordered
 
 
+def get_retrieval_diagnostics() -> dict:
+    total_chunks = spark.table(CHUNKS_TABLE).count()
+    translated_chunks = (
+        spark.table(CHUNKS_TABLE)
+        .filter(F.col("chunk_text_en").isNotNull() & (F.length(F.col("chunk_text_en")) > 0))
+        .count()
+    )
+    indexed_pending = (
+        spark.table(CHUNKS_TABLE)
+        .filter(F.col("index_status") != "done")
+        .count()
+    )
+    return {
+        "chunks_total": total_chunks,
+        "chunks_with_english": translated_chunks,
+        "chunks_index_not_done": indexed_pending,
+    }
+
+
 def build_prompt(question: str, chunks: list[dict]) -> str:
     lines = []
     for i, ch in enumerate(chunks, start=1):
@@ -212,7 +231,14 @@ def call_llm_ai_query(prompt: str) -> str:
 retrieved = retrieve_chunks(QUESTION, TOP_K)
 print("Retrieved chunks:", len(retrieved))
 if not retrieved:
-    raise RuntimeError("No chunks retrieved. Check that the vector index exists and contains translated chunks.")
+    diagnostics = get_retrieval_diagnostics()
+    raise RuntimeError(
+        "No chunks retrieved. "
+        f"Diagnostics: {diagnostics}. "
+        "Most likely causes: the Delta Sync index has not been synced after creation, "
+        "the index name/endpoint is pointing to the wrong index, or the index is still empty. "
+        "Rerun 05_vector_index and confirm it runs a triggered sync on the same endpoint/index."
+    )
 
 prompt = build_prompt(QUESTION, retrieved)
 

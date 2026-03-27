@@ -147,6 +147,8 @@ columns_to_sync = [
     "chunk_index",
 ]
 
+created_index = False
+
 if not vsc.index_exists(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME):
     print("Creating Delta Sync index:", VS_INDEX_NAME)
     vsc.create_delta_sync_index_and_wait(
@@ -159,12 +161,18 @@ if not vsc.index_exists(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME
         embedding_model_endpoint_name=EMBEDDING_MODEL_ENDPOINT,
         columns_to_sync=columns_to_sync,
     )
+    created_index = True
 else:
     print("Index exists, syncing:", VS_INDEX_NAME)
-    index = vsc.get_index(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME)
-    if PIPELINE_TYPE == "TRIGGERED":
-        index.sync()
-    index.wait_until_ready(verbose=True, wait_for_updates=(PIPELINE_TYPE == "TRIGGERED"))
+
+index = vsc.get_index(endpoint_name=VS_ENDPOINT_NAME, index_name=VS_INDEX_NAME)
+if PIPELINE_TYPE == "TRIGGERED":
+    print("Running triggered sync:", VS_INDEX_NAME)
+    index.sync()
+index.wait_until_ready(verbose=True, wait_for_updates=(PIPELINE_TYPE == "TRIGGERED"))
+
+if created_index:
+    print("Created and synced Delta Sync index:", VS_INDEX_NAME)
 
 # Mark chunks as indexed (requested/ready) for dashboarding.
 spark.sql(f"""
