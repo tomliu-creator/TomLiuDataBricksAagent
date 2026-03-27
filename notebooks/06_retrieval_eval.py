@@ -21,6 +21,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 from pyspark.sql import types as T
+from pyspark.sql import functions as F
 from databricks.vector_search.client import VectorSearchClient
 
 def _ensure_text_widget(name: str, default: str, override_if: set[str] | None = None):
