@@ -52,8 +52,8 @@ dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
 dbutils.widgets.text("top_k", "8")
 dbutils.widgets.text("filters", "")  # optional Vector Search filters
 
-dbutils.widgets.dropdown("llm_mode", "anthropic_messages", ["anthropic_messages", "ai_query"])
-dbutils.widgets.text("model_name", "databricks-claude-sonnet-4-6")
+dbutils.widgets.dropdown("llm_mode", "ai_query", ["ai_query", "anthropic_messages"])
+dbutils.widgets.text("model_name", "databricks-gpt-oss-20b")
 dbutils.widgets.text("anthropic_proxy_endpoint_name", "anthropic")  # set if your workspace uses a different proxy endpoint
 dbutils.widgets.text("temperature", "0.1")
 dbutils.widgets.text("max_tokens", "900")

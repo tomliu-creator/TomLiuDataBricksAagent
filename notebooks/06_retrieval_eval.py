@@ -47,7 +47,7 @@ dbutils.widgets.text("filters", "")  # e.g. {"fiscal_year >= 2020": "..."} is in
 
 # Optional: generate a draft answer for each query.
 dbutils.widgets.dropdown("answer_mode", "ai_query", ["anthropic_messages", "ai_query", "disabled"])
-dbutils.widgets.text("answer_model_name", "databricks-claude-sonnet-4-6")  # change if not enabled in workspace
+dbutils.widgets.text("answer_model_name", "databricks-gpt-oss-20b")  # known-working ai_query model in this workspace
 dbutils.widgets.text("anthropic_proxy_endpoint_name", "anthropic")
 
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
@@ -63,7 +63,7 @@ _ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT, override_if={"", "v
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 
 # If an old run left answers disabled / unset, switch back to enabled defaults.
-_ensure_text_widget("answer_model_name", "databricks-claude-sonnet-4-6", override_if={""})
+_ensure_text_widget("answer_model_name", "databricks-gpt-oss-20b", override_if={""})
 try:
     if dbutils.widgets.get("answer_mode") in ("", "disabled"):
         dbutils.widgets.remove("answer_mode")
