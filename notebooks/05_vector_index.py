@@ -63,6 +63,12 @@ VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
 EMBEDDING_MODEL_ENDPOINT = dbutils.widgets.get("embedding_model_endpoint_name").strip()
 PIPELINE_TYPE = dbutils.widgets.get("pipeline_type").strip().upper()
 
+# Override stale embedding model names that don't exist in this workspace.
+_STALE_EMBEDDING_MODELS = {"databricks-bge-large-en", ""}
+if EMBEDDING_MODEL_ENDPOINT in _STALE_EMBEDDING_MODELS:
+    print(f"[override] Stale EMBEDDING_MODEL_ENDPOINT '{EMBEDDING_MODEL_ENDPOINT}' -> 'databricks-gte-large-en'")
+    EMBEDDING_MODEL_ENDPOINT = "databricks-gte-large-en"
+
 print("VS endpoint:", VS_ENDPOINT_NAME)
 print("VS index:", VS_INDEX_NAME)
 print("Pipeline type:", PIPELINE_TYPE)
