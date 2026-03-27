@@ -22,11 +22,36 @@
 
 from databricks.vector_search.client import VectorSearchClient
 
+def _ensure_text_widget(name: str, default: str):
+    """
+    Databricks widgets persist across reruns. If a widget already exists with an empty value,
+    calling widgets.text(...) again won't update it. This helper forces a sane default.
+    """
+    try:
+        cur = dbutils.widgets.get(name)
+        if (cur is None or cur.strip() == "") and default:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.text(name, default)
+    except Exception:
+        dbutils.widgets.text(name, default)
+
+
+def _ensure_dropdown_widget(name: str, default: str, choices: list[str]):
+    try:
+        cur = dbutils.widgets.get(name)
+        if cur not in choices:
+            dbutils.widgets.remove(name)
+            dbutils.widgets.dropdown(name, default, choices)
+    except Exception:
+        dbutils.widgets.dropdown(name, default, choices)
+
+
 # Parameterize names; do not hardcode brittle endpoints.
-dbutils.widgets.text("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
-dbutils.widgets.text("vs_index_name", DEFAULT_VS_INDEX)
-dbutils.widgets.text("embedding_model_endpoint_name", "")
-dbutils.widgets.dropdown("pipeline_type", "TRIGGERED", ["TRIGGERED", "CONTINUOUS"])
+_ensure_text_widget("vs_endpoint_name", DEFAULT_VS_ENDPOINT)
+_ensure_text_widget("vs_index_name", DEFAULT_VS_INDEX)
+# Default to Databricks-hosted English embeddings if available in the workspace.
+_ensure_text_widget("embedding_model_endpoint_name", "databricks-bge-large-en")
+_ensure_dropdown_widget("pipeline_type", "TRIGGERED", ["TRIGGERED", "CONTINUOUS"])
 
 VS_ENDPOINT_NAME = dbutils.widgets.get("vs_endpoint_name").strip()
 VS_INDEX_NAME = dbutils.widgets.get("vs_index_name").strip()
